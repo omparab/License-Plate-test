@@ -167,3 +167,5 @@ test.csv
 out.mp4
 yolov8n.pt
 outputvideos/
+results.csv
+main.py
