@@ -1,9 +1,23 @@
+"""
+Interpolates missing frames for smooth tracking visualization
+Creates test_interpolated.csv from results.csv
+"""
+
 import csv
 import numpy as np
 from scipy.interpolate import interp1d
 
 
 def interpolate_bounding_boxes(data):
+    """
+    Interpolate bounding boxes for missing frames to create smooth tracking
+    
+    Args:
+        data: List of dictionaries containing detection data
+        
+    Returns:
+        List of interpolated data with filled gaps
+    """
     # Extract necessary data columns from input data
     frame_numbers = np.array([int(row['frame_nmr']) for row in data])
     car_ids = np.array([int(float(row['car_id'])) for row in data])
@@ -12,10 +26,10 @@ def interpolate_bounding_boxes(data):
 
     interpolated_data = []
     unique_car_ids = np.unique(car_ids)
+    
     for car_id in unique_car_ids:
-
         frame_numbers_ = [p['frame_nmr'] for p in data if int(float(p['car_id'])) == int(float(car_id))]
-        print(frame_numbers_, car_id)
+        print(f"Processing car_id {car_id}: frames {frame_numbers_}")
 
         # Filter data for a specific car ID
         car_mask = car_ids == car_id
@@ -41,8 +55,12 @@ def interpolate_bounding_boxes(data):
                     frames_gap = frame_number - prev_frame_number
                     x = np.array([prev_frame_number, frame_number])
                     x_new = np.linspace(prev_frame_number, frame_number, num=frames_gap, endpoint=False)
+                    
+                    # Interpolate car bounding boxes
                     interp_func = interp1d(x, np.vstack((prev_car_bbox, car_bbox)), axis=0, kind='linear')
                     interpolated_car_bboxes = interp_func(x_new)
+                    
+                    # Interpolate license plate bounding boxes
                     interp_func = interp1d(x, np.vstack((prev_license_plate_bbox, license_plate_bbox)), axis=0, kind='linear')
                     interpolated_license_plate_bboxes = interp_func(x_new)
 
@@ -52,6 +70,7 @@ def interpolate_bounding_boxes(data):
             car_bboxes_interpolated.append(car_bbox)
             license_plate_bboxes_interpolated.append(license_plate_bbox)
 
+        # Create interpolated data rows
         for i in range(len(car_bboxes_interpolated)):
             frame_number = first_frame_number + i
             row = {}
@@ -63,31 +82,64 @@ def interpolate_bounding_boxes(data):
             if str(frame_number) not in frame_numbers_:
                 # Imputed row, set the following fields to '0'
                 row['license_plate_bbox_score'] = '0'
-                row['license_number'] = '0'
-                row['license_number_score'] = '0'
+                row['license_plate_text'] = '0'
+                row['license_plate_text_score'] = '0'
+                row['is_registered'] = '0'
+                row['match_type'] = '0'
+                row['owner_name'] = '0'
+                row['vehicle_status'] = '0'
             else:
-                # Original row, retrieve values from the input data if available
-                original_row = [p for p in data if int(p['frame_nmr']) == frame_number and int(float(p['car_id'])) == int(float(car_id))][0]
-                row['license_plate_bbox_score'] = original_row['license_plate_bbox_score'] if 'license_plate_bbox_score' in original_row else '0'
-                row['license_number'] = original_row['license_number'] if 'license_number' in original_row else '0'
-                row['license_number_score'] = original_row['license_number_score'] if 'license_number_score' in original_row else '0'
+                # Original row, retrieve values from the input data
+                original_row = [p for p in data if int(p['frame_nmr']) == frame_number and 
+                               int(float(p['car_id'])) == int(float(car_id))][0]
+                row['license_plate_bbox_score'] = original_row.get('license_plate_bbox_score', '0')
+                row['license_plate_text'] = original_row.get('license_plate_text', '0')
+                row['license_plate_text_score'] = original_row.get('license_plate_text_score', '0')
+                row['is_registered'] = original_row.get('is_registered', '0')
+                row['match_type'] = original_row.get('match_type', '0')
+                row['owner_name'] = original_row.get('owner_name', '0')
+                row['vehicle_status'] = original_row.get('vehicle_status', '0')
 
             interpolated_data.append(row)
 
     return interpolated_data
 
 
-# Load the CSV file
-with open('results.csv', 'r') as file:
-    reader = csv.DictReader(file)
-    data = list(reader)
+def main(input_csv='results.csv', output_csv='results_interpolated.csv'):
+    """
+    Main function to interpolate CSV data
+    
+    Args:
+        input_csv: Path to input CSV file
+        output_csv: Path to output interpolated CSV file
+    """
+    print(f"Loading data from {input_csv}...")
+    
+    # Load the CSV file
+    with open(input_csv, 'r') as file:
+        reader = csv.DictReader(file)
+        data = list(reader)
+    
+    print(f"Loaded {len(data)} rows")
+    print("Interpolating missing frames...")
+    
+    # Interpolate missing data
+    interpolated_data = interpolate_bounding_boxes(data)
+    
+    print(f"Generated {len(interpolated_data)} interpolated rows")
+    
+    # Write updated data to a new CSV file
+    header = ['frame_nmr', 'car_id', 'car_bbox', 'license_plate_bbox', 
+              'license_plate_bbox_score', 'license_plate_text', 'license_plate_text_score',
+              'is_registered', 'match_type', 'owner_name', 'vehicle_status']
+    
+    with open(output_csv, 'w', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=header)
+        writer.writeheader()
+        writer.writerows(interpolated_data)
+    
+    print(f"✅ Saved interpolated data to {output_csv}")
 
-# Interpolate missing data
-interpolated_data = interpolate_bounding_boxes(data)
 
-# Write updated data to a new CSV file
-header = ['frame_nmr', 'car_id', 'car_bbox', 'license_plate_bbox', 'license_plate_bbox_score', 'license_number', 'license_number_score']
-with open('test_interpolated.csv', 'w', newline='') as file:
-    writer = csv.DictWriter(file, fieldnames=header)
-    writer.writeheader()
-    writer.writerows(interpolated_data)
+if __name__ == '__main__':
+    main()
