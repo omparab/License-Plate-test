@@ -12,6 +12,9 @@ from sort.sort import Sort
 from util import get_car, read_license_plate, write_csv
 import numpy as np
 from database import LicensePlateDB, initialize_sample_data
+from add_missing_data import interpolate_bounding_boxes
+from visualize import create_annotated_video
+import csv
 
 # Allow YOLO model loading
 torch.serialization.add_safe_globals([DetectionModel])
@@ -24,7 +27,7 @@ def get_database():
 # Page config
 st.set_page_config(
     page_title="License Plate Detection System",
-    page_icon="",
+    page_icon="🚗",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -33,15 +36,15 @@ st.set_page_config(
 db = get_database()
 
 # Title and description
-st.title("License Plate Detection & Verification System")
+st.title("🚗 License Plate Detection & Verification System")
 st.markdown("Upload a video to detect vehicles and verify license plates against registered database.")
 
 # Sidebar navigation
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Video Analysis", "Database Management", "Reports & Alerts"])
+st.sidebar.title("📋 Navigation")
+page = st.sidebar.radio("Go to", ["🎥 Video Analysis", "🗄️ Database Management", "📊 Reports & Alerts"])
 
-if page == "Database Management":
-    st.header("Registered Vehicles Database")
+if page == "🗄️ Database Management":
+    st.header("🗄️ Registered Vehicles Database")
     
     # Tabs for different database operations
     tab1, tab2, tab3 = st.tabs(["View Vehicles", "Add Vehicle", "Bulk Import"])
@@ -63,7 +66,7 @@ if page == "Database Management":
                 "Select license plate to remove",
                 options=[v[1] for v in vehicles]
             )
-            if st.button("Delete Vehicle", type="secondary"):
+            if st.button("🗑️ Delete Vehicle", type="secondary"):
                 if db.delete_vehicle(plate_to_delete):
                     st.success(f"Vehicle {plate_to_delete} removed successfully!")
                     st.rerun()
@@ -117,7 +120,7 @@ if page == "Database Management":
             df = pd.read_csv(uploaded_csv)
             st.dataframe(df, width="stretch")
             
-            if st.button("Import All Vehicles"):
+            if st.button("📥 Import All Vehicles"):
                 vehicles_data = []
                 for _, row in df.iterrows():
                     vehicles_data.append((
@@ -129,15 +132,15 @@ if page == "Database Management":
                     ))
                 
                 added, skipped = db.add_multiple_vehicles(vehicles_data)
-                st.success(f"Added {added} vehicles, skipped {skipped} duplicates")
+                st.success(f"✅ Added {added} vehicles, skipped {skipped} duplicates")
 
-elif page == "Reports & Alerts":
-    st.header("Detection Reports & Alerts")
+elif page == "📊 Reports & Alerts":
+    st.header("📊 Detection Reports & Alerts")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Recent Detections")
+        st.subheader("🔍 Recent Detections")
         detections = db.get_detection_history(limit=50)
         
         if detections:
@@ -150,7 +153,7 @@ elif page == "Reports & Alerts":
             st.info("No detections yet. Process a video to see results here.")
     
     with col2:
-        st.subheader("Active Alerts")
+        st.subheader("⚠️ Active Alerts")
         alerts = db.get_active_alerts()
         
         if alerts:
@@ -162,7 +165,7 @@ elif page == "Reports & Alerts":
             st.success("No active alerts")
 
 else:  # Video Analysis page
-    st.header("Video Analysis")
+    st.header("🎥 Video Analysis")
 
 # Sidebar for settings
 st.sidebar.header("⚙️ Detection Settings")
@@ -170,23 +173,42 @@ frame_skip = st.sidebar.slider("Process every Nth frame", 1, 20, 10,
                                help="Higher values = faster processing but may miss some detections")
 confidence_threshold = st.sidebar.slider("Detection Confidence", 0.1, 1.0, 0.5, 
                                         help="Minimum confidence for detections")
-enable_db_check = st.sidebar.checkbox("Enable Database Verification", value=True,
+enable_db_check = st.sidebar.checkbox("✅ Enable Database Verification", value=True,
                                      help="Check detected plates against database")
-fuzzy_match = st.sidebar.checkbox("Enable Fuzzy Matching", value=True,
+fuzzy_match = st.sidebar.checkbox("🔍 Enable Fuzzy Matching", value=True,
                                   help="Find similar plates even with OCR errors")
 fuzzy_threshold = st.sidebar.slider("Fuzzy Match Threshold", 0.5, 1.0, 0.8,
                                    help="Similarity threshold for fuzzy matching")
+
+st.sidebar.header("🎬 Video Output Settings")
+create_video = st.sidebar.checkbox("📹 Create Annotated Video", value=True,
+                                   help="Generate output video with bounding boxes")
+show_registration_in_video = st.sidebar.checkbox("🏷️ Show Registration Status", value=True,
+                                                  help="Display registration status in video")
 
 # Cache models to avoid reloading
 @st.cache_resource
 def load_models():
     with st.spinner("Loading AI models... This may take a minute."):
-        coco_model = YOLO('yolov8n.pt')
-        license_plate_detector = YOLO('license_plate_detector.pt')
-    return coco_model, license_plate_detector
+        try:
+            # YOLOv8n will auto-download if not present
+            coco_model = YOLO('yolov8n.pt')
+            
+            # Check if custom license plate detector exists
+            if os.path.exists('license_plate_detector.pt'):
+                license_plate_detector = YOLO('license_plate_detector.pt')
+            else:
+                st.warning("⚠️ Custom license plate detector not found. Using YOLOv8n for both detection tasks.")
+                st.info("To use a custom model, upload 'license_plate_detector.pt' to your repository.")
+                license_plate_detector = YOLO('yolov8n.pt')
+            
+            return coco_model, license_plate_detector
+        except Exception as e:
+            st.error(f"Error loading models: {str(e)}")
+            st.stop()
 
 # Main processing function
-def process_video(video_path, coco_model, license_plate_detector, frame_skip, enable_db_check=True, fuzzy_match=False, fuzzy_threshold=0.75):
+def process_video(video_path, coco_model, license_plate_detector, frame_skip, enable_db_check, fuzzy_match, fuzzy_threshold):
     results = {}
     mot_tracker = Sort()
     license_plate_cache = {}
@@ -232,8 +254,8 @@ def process_video(video_path, coco_model, license_plate_detector, frame_skip, en
             
             stats_col1.metric("Frames", f"{processed_frames}/{total_frames//frame_skip}")
             stats_col2.metric("OCR Calls", ocr_calls)
-            stats_col3.metric("Registered", registered_count)
-            stats_col4.metric("Unregistered", unregistered_count)
+            stats_col3.metric("✅ Registered", registered_count)
+            stats_col4.metric("❌ Unregistered", unregistered_count)
             
             results[frame_nmr] = {}
             
@@ -373,47 +395,175 @@ if uploaded_file is not None:
     st.video(uploaded_file)
     
     # Process button
-    if st.button("Start Processing", type="primary"):
+    if st.button("🚀 Start Processing", type="primary"):
         try:
             # Load models
             coco_model, license_plate_detector = load_models()
             
             # Process video
-            st.header("Processing Progress")
-            results, total_time, ocr_calls, unique_cars, *_ = process_video(
-                video_path, coco_model, license_plate_detector, frame_skip
+            st.header("📊 Processing Progress")
+            results, total_time, ocr_calls, unique_cars, registered_count, unregistered_count, fuzzy_matches = process_video(
+                video_path, coco_model, license_plate_detector, frame_skip, 
+                enable_db_check, fuzzy_match, fuzzy_threshold
             )
-
             
             # Display results
             st.success(f"Processing completed in {total_time:.2f} seconds!")
             
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             col1.metric("Total OCR Calls", ocr_calls)
             col2.metric("Unique Vehicles", unique_cars)
-            col3.metric("Processing Speed", f"{total_time:.1f}s")
+            col3.metric("✅ Registered", registered_count, delta="Authorized")
+            col4.metric("❌ Unregistered", unregistered_count, delta="Alert", delta_color="inverse")
             
-            # Save results to CSV
+            # Show verification results
+            if enable_db_check:
+                st.header("🔍 Verification Results")
+                
+                # Registered vehicles found
+                if registered_count > 0:
+                    st.success(f"✅ Found {registered_count} registered vehicle(s)")
+                    
+                    registered_plates = []
+                    for frame_results in results.values():
+                        for car_result in frame_results.values():
+                            if 'database' in car_result and car_result['database']['found']:
+                                db_info = car_result['database']
+                                if not db_info.get('fuzzy'):
+                                    registered_plates.append({
+                                        'License Plate': car_result['license_plate']['text'],
+                                        'Owner': db_info.get('owner_name', 'N/A'),
+                                        'Vehicle Type': db_info.get('vehicle_type', 'N/A'),
+                                        'Status': db_info.get('status', 'N/A'),
+                                        'Confidence': f"{car_result['license_plate']['text_score']:.2%}"
+                                    })
+                    
+                    if registered_plates:
+                        df_registered = pd.DataFrame(registered_plates).drop_duplicates()
+                        st.dataframe(df_registered, width="stretch")
+                
+                # Fuzzy matches
+                if fuzzy_matches:
+                    st.warning(f"🔍 Found {len(fuzzy_matches)} fuzzy match(es) (OCR corrections)")
+                    df_fuzzy = pd.DataFrame(fuzzy_matches)
+                    df_fuzzy['similarity'] = df_fuzzy['similarity'].apply(lambda x: f"{x:.2%}")
+                    df_fuzzy.columns = ['Detected (OCR)', 'Matched (Database)', 'Similarity']
+                    st.dataframe(df_fuzzy, width="stretch")
+                
+                # Unregistered vehicles
+                if unregistered_count > 0:
+                    st.error(f"⚠️ Detected {unregistered_count} unregistered vehicle(s)")
+                    
+                    unregistered_plates = []
+                    for frame_results in results.values():
+                        for car_result in frame_results.values():
+                            if 'database' not in car_result or not car_result['database']['found']:
+                                unregistered_plates.append({
+                                    'License Plate': car_result['license_plate']['text'],
+                                    'Confidence': f"{car_result['license_plate']['text_score']:.2%}",
+                                    'Alert': '⚠️ Unauthorized'
+                                })
+                    
+                    if unregistered_plates:
+                        df_unregistered = pd.DataFrame(unregistered_plates).drop_duplicates()
+                        st.dataframe(df_unregistered, width="stretch")
+            
+            # Save results to CSV with registration status
             csv_path = 'results.csv'
-            write_csv(results, csv_path)
+            
+            # Enhanced write_csv with registration info
+            csv_data = []
+            for frame_nmr, frame_data in results.items():
+                for car_id, data in frame_data.items():
+                    # Check registration status
+                    is_registered = False
+                    match_type = 'none'
+                    owner_name = ''
+                    vehicle_status = ''
+                    
+                    if 'database' in data and data['database']['found']:
+                        is_registered = True
+                        if data['database'].get('fuzzy'):
+                            match_type = 'fuzzy'
+                            best_match = data['database']['best_match']
+                            # Get details from database
+                            db_details = db.check_license_plate(best_match['plate'])
+                            owner_name = db_details.get('owner_name', '')
+                            vehicle_status = db_details.get('status', '')
+                        else:
+                            match_type = 'exact'
+                            owner_name = data['database'].get('owner_name', '')
+                            vehicle_status = data['database'].get('status', '')
+                    
+                    csv_data.append({
+                        'frame_nmr': frame_nmr,
+                        'car_id': car_id,
+                        'car_bbox': data['car']['bbox'],
+                        'license_plate_bbox': data['license_plate']['bbox'],
+                        'license_plate_text': data['license_plate']['text'],
+                        'license_plate_bbox_score': data['license_plate']['bbox_score'],
+                        'license_plate_text_score': data['license_plate']['text_score'],
+                        'is_registered': 'YES' if is_registered else 'NO',
+                        'match_type': match_type,
+                        'owner_name': owner_name,
+                        'vehicle_status': vehicle_status
+                    })
+            
+            # Save to CSV
+            df_output = pd.DataFrame(csv_data)
+            df_output.to_csv(csv_path, index=False)
             
             # Read and display CSV
             if os.path.exists(csv_path):
-                st.header("Detection Results")
+                st.header("📋 Complete Detection Results")
                 df = pd.read_csv(csv_path)
-                st.dataframe(df, width="stretch")
+                
+                # Reorder columns for better display
+                column_order = [
+                    'frame_nmr', 'car_id', 'license_plate_text', 'is_registered',
+                    'match_type', 'owner_name', 'vehicle_status',
+                    'license_plate_text_score', 'license_plate_bbox_score'
+                ]
+                
+                # Only include columns that exist
+                display_columns = [col for col in column_order if col in df.columns]
+                df_display = df[display_columns]
+                
+                # Style the dataframe
+                def highlight_registration(row):
+                    if row['is_registered'] == 'YES':
+                        return ['background-color: #d4edda'] * len(row)
+                    else:
+                        return ['background-color: #f8d7da'] * len(row)
+                
+                st.dataframe(
+                    df_display.style.apply(highlight_registration, axis=1),
+                    width="stretch"
+                )
+                
+                # Summary statistics
+                st.subheader("📊 Summary")
+                summary_col1, summary_col2, summary_col3 = st.columns(3)
+                
+                registered_in_csv = (df['is_registered'] == 'YES').sum()
+                unregistered_in_csv = (df['is_registered'] == 'NO').sum()
+                total_detections = len(df)
+                
+                summary_col1.metric("Total Detections", total_detections)
+                summary_col2.metric("✅ Registered", registered_in_csv)
+                summary_col3.metric("❌ Unregistered", unregistered_in_csv)
                 
                 # Download button
                 with open(csv_path, 'rb') as f:
                     st.download_button(
-                        label="Download Results (CSV)",
+                        label="📥 Download Results (CSV)",
                         data=f,
                         file_name="license_plate_results.csv",
                         mime="text/csv"
                     )
                 
                 # Statistics
-                st.header("Statistics")
+                st.header("📈 Detection Statistics")
                 stat_col1, stat_col2 = st.columns(2)
                 
                 with stat_col1:
@@ -426,6 +576,63 @@ if uploaded_file is not None:
                     st.subheader("Detection Confidence")
                     if 'license_plate_text_score' in df.columns:
                         st.line_chart(df['license_plate_text_score'])
+            
+            # Generate annotated video if requested
+            if create_video:
+                st.header("🎬 Generating Annotated Video")
+                
+                with st.spinner("Creating annotated video... This may take a few minutes."):
+                    try:
+                        # Step 1: Interpolate missing frames
+                        st.info("Step 1/2: Interpolating frames for smooth tracking...")
+                        
+                        # Convert DataFrame to list of dicts for interpolation
+                        csv_data_for_interp = df_output.to_dict('records')
+                        interpolated_data = interpolate_bounding_boxes(csv_data_for_interp)
+                        
+                        # Save interpolated data
+                        interp_csv_path = 'results_interpolated.csv'
+                        header = ['frame_nmr', 'car_id', 'car_bbox', 'license_plate_bbox', 
+                                  'license_plate_bbox_score', 'license_plate_text', 'license_plate_text_score',
+                                  'is_registered', 'match_type', 'owner_name', 'vehicle_status']
+                        
+                        with open(interp_csv_path, 'w', newline='') as f:
+                            writer = csv.DictWriter(f, fieldnames=header)
+                            writer.writeheader()
+                            writer.writerows(interpolated_data)
+                        
+                        st.success(f"✅ Interpolated {len(interpolated_data)} frames")
+                        
+                        # Step 2: Create annotated video
+                        st.info("Step 2/2: Creating annotated video with bounding boxes...")
+                        
+                        output_video_path = 'output_annotated.mp4'
+                        create_annotated_video(
+                            input_csv=interp_csv_path,
+                            video_path=video_path,
+                            output_path=output_video_path,
+                            show_registration_status=show_registration_in_video
+                        )
+                        
+                        st.success("✅ Annotated video created successfully!")
+                        
+                        # Display video
+                        if os.path.exists(output_video_path):
+                            st.subheader("📹 Annotated Video Output")
+                            st.video(output_video_path)
+                            
+                            # Download button for video
+                            with open(output_video_path, 'rb') as video_file:
+                                st.download_button(
+                                    label="📥 Download Annotated Video",
+                                    data=video_file,
+                                    file_name="annotated_video.mp4",
+                                    mime="video/mp4"
+                                )
+                        
+                    except Exception as e:
+                        st.error(f"Error creating video: {str(e)}")
+                        st.exception(e)
         
         except Exception as e:
             st.error(f"Error processing video: {str(e)}")
@@ -443,10 +650,10 @@ if uploaded_file is not None:
                 pass
 
 else:
-    st.info("Please upload a video file to get started")
+    st.info("👆 Please upload a video file to get started")
     
     # Instructions
-    st.header("How to Use")
+    st.header("📖 How to Use")
     st.markdown("""
     1. **Upload a video** using the file uploader above
     2. **Adjust settings** in the sidebar (optional)
@@ -458,7 +665,7 @@ else:
     **Note:** First run will download AI models (~50MB), which may take a few minutes.
     """)
     
-    st.header("Performance Tips")
+    st.header("⚡ Performance Tips")
     st.markdown("""
     - **CPU processing is slow**: Processing 1 minute of video may take 5-10 minutes
     - **Increase frame skip**: Set to 15-20 for faster processing
@@ -468,4 +675,4 @@ else:
 
 # Footer
 st.markdown("---")
-st.markdown("Built with Streamlit | Powered by YOLOv8 & EasyOCR")
+st.markdown("Built with Streamlit 🎈 | Powered by YOLOv8 & EasyOCR")
