@@ -1,29 +1,12 @@
-# Core app
-streamlit>=1.28.0,<2.0
-
-# Computer vision & detection
-opencv-python-headless>=4.8.0,<5.0
-ultralytics>=8.3.204,<8.4
-
-# PyTorch & related
-torch>=2.0.1,<2.9
-torchvision>=0.15.1,<0.24
-
-# OCR
-easyocr>=1.7.2,<1.8
-
-# Data processing
-numpy>=1.24.0,<2.3
-pandas>=2.0.0,<2.4
-scipy>=1.11.0,<1.16
-scikit-image>=0.21.0,<0.26
+streamlit>=1.28.0
+opencv-python-headless==4.8.1.78
+ultralytics>=8.0.0
+torch>=2.0.0,<2.6.0
+torchvision>=0.15.0,<0.20.0
+easyocr>=1.7.0
+numpy>=1.24.0,<2.0.0
+pandas>=2.0.0
+Pillow>=10.0.0
+scikit-image>=0.21.0
 filterpy>=1.4.5
-
-# Image handling
-Pillow>=10.0.0,<11.0
-
-# Logging & formatting
-rich>=14.1.0,<15.0
-markdown-it-py>=4.0.0,<5.0
-mdurl~=0.1
-pygments>=2.13.0,<3.0
+scipy>=1.11.0
