@@ -5,3 +5,5 @@ numpy
 scipy
 easyocr
 filterpy
+streamlit
+opencv-python-headless
