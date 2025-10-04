@@ -495,11 +495,15 @@ if uploaded_file is not None:
                             owner_name = data['database'].get('owner_name', '')
                             vehicle_status = data['database'].get('status', '')
                     
+                    # Convert bounding boxes to string format for interpolation
+                    car_bbox_list = data['car']['bbox']
+                    license_bbox_list = data['license_plate']['bbox']
+                    
                     csv_data.append({
                         'frame_nmr': frame_nmr,
                         'car_id': car_id,
-                        'car_bbox': data['car']['bbox'],
-                        'license_plate_bbox': data['license_plate']['bbox'],
+                        'car_bbox': f"[{' '.join(map(str, car_bbox_list))}]",  # Convert to string format
+                        'license_plate_bbox': f"[{' '.join(map(str, license_bbox_list))}]",  # Convert to string format
                         'license_plate_text': data['license_plate']['text'],
                         'license_plate_bbox_score': data['license_plate']['bbox_score'],
                         'license_plate_text_score': data['license_plate']['text_score'],
